@@ -31,6 +31,7 @@ try:
 except ImportError:
     HAS_PARAMIKO = False
 
+from ansible.module_utils.basic import get_exception
 
 ANSI_RE = re.compile(r'(\x1b\[\?1h\x1b=)')
 
@@ -101,12 +102,15 @@ class Shell(object):
         if not look_for_keys:
             look_for_keys = password is None
 
-        self.ssh.connect(host, port=port, username=username, password=password,
-                    timeout=timeout, look_for_keys=look_for_keys, pkey=pkey,
-                    key_filename=key_filename, allow_agent=allow_agent)
+        try:
+            self.ssh.connect(host, port=port, username=username, password=password,
+                        timeout=timeout, look_for_keys=look_for_keys, pkey=pkey,
+                        key_filename=key_filename, allow_agent=allow_agent)
 
-        self.shell = self.ssh.invoke_shell()
-        self.shell.settimeout(timeout)
+            self.shell = self.ssh.invoke_shell()
+            self.shell.settimeout(timeout)
+        except socket.gaierror:
+            raise ShellError("unable to resolve host name")
 
         if self.kickstart:
             self.shell.sendall("\n")
@@ -135,7 +139,8 @@ class Shell(object):
                 if self.read(window):
                     resp = self.strip(recv.getvalue())
                     return self.sanitize(cmd, resp)
-            except ShellError, exc:
+            except ShellError:
+                exc = get_exception()
                 exc.command = cmd
                 raise
 

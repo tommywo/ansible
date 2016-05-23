@@ -3,6 +3,19 @@ Ansible Changes By Release
 
 ## 2.2 TBD - ACTIVE DEVELOPMENT
 
+###Major Changes:
+
+* Added support for binary modules
+
+####New Modules:
+- aws
+  * ec2_customer_gateway
+- cloudstack
+  * cs_router
+
+###Minor Changes:
+* now -vvv shows exact path from which 'currently executing module' was picked up from.
+
 ## 2.1 "The Song Remains the Same" - ACTIVE DEVELOPMENT
 
 ###Major Changes:

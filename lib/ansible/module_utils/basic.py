@@ -136,10 +136,10 @@ except ImportError:
     try:
         import simplejson as json
     except ImportError:
-        print('{"msg": "Error: ansible requires the stdlib json or simplejson module, neither was found!", "failed": true}')
+        print('\n{"msg": "Error: ansible requires the stdlib json or simplejson module, neither was found!", "failed": true}')
         sys.exit(1)
     except SyntaxError:
-        print('{"msg": "SyntaxError: probably due to installed simplejson being for a different python version", "failed": true}')
+        print('\n{"msg": "SyntaxError: probably due to installed simplejson being for a different python version", "failed": true}')
         sys.exit(1)
 
 HAVE_SELINUX=False
@@ -219,10 +219,13 @@ except ImportError:
 
 _literal_eval = literal_eval
 
-# Internal global holding passed in params and constants.  This is consulted
-# in case multiple AnsibleModules are created.  Otherwise each AnsibleModule
-# would attempt to read from stdin.  Other code should not use this directly
-# as it is an internal implementation detail
+# Backwards compat.  There were present in basic.py before
+from ansible.module_utils.pycompat24 import get_exception
+
+# Internal global holding passed in params.  This is consulted in case
+# multiple AnsibleModules are created.  Otherwise each AnsibleModule would
+# attempt to read from stdin.  Other code should not use this directly as it
+# is an internal implementation detail
 _ANSIBLE_ARGS = None
 
 FILE_COMMON_ARGUMENTS=dict(
@@ -251,21 +254,6 @@ PASSWD_ARG_RE = re.compile(r'^[-]{0,2}pass[-]?(word|wd)?')
 PERM_BITS = int('07777', 8)      # file mode permission bits
 EXEC_PERM_BITS = int('00111', 8) # execute permission bits
 DEFAULT_PERM = int('0666', 8)    # default file permission bits
-
-
-def get_exception():
-    """Get the current exception.
-
-    This code needs to work on Python 2.4 through 3.x, so we cannot use
-    "except Exception, e:" (SyntaxError on Python 3.x) nor
-    "except Exception as e:" (SyntaxError on Python 2.4-2.5).
-    Instead we must use ::
-
-        except Exception:
-            e = get_exception()
-
-    """
-    return sys.exc_info()[1]
 
 
 def get_platform():
@@ -520,9 +508,59 @@ def is_executable(path):
             or stat.S_IXGRP & os.stat(path)[stat.ST_MODE]
             or stat.S_IXOTH & os.stat(path)[stat.ST_MODE])
 
+def _load_params():
+    ''' read the modules parameters and store them globally.
 
-class AnsibleFallbackNotFound(Exception):
-    pass
+    This function may be needed for certain very dynamic custom modules which
+    want to process the parameters that are being handed the module.  Since
+    this is so closely tied to the implementation of modules we cannot
+    guarantee API stability for it (it may change between versions) however we
+    will try not to break it gratuitously.  It is certainly more future-proof
+    to call this function and consume its outputs than to implement the logic
+    inside it as a copy in your own code.
+    '''
+    global _ANSIBLE_ARGS
+    if _ANSIBLE_ARGS is not None:
+        buffer = _ANSIBLE_ARGS
+    else:
+        # debug overrides to read args from file or cmdline
+
+        # Avoid tracebacks when locale is non-utf8
+        # We control the args and we pass them as utf8
+        if len(sys.argv) > 1:
+            if os.path.isfile(sys.argv[1]):
+                fd = open(sys.argv[1], 'rb')
+                buffer = fd.read()
+                fd.close()
+            else:
+                buffer = sys.argv[1]
+                if sys.version_info >= (3,):
+                    buffer = buffer.encode('utf-8', errors='surrogateescape')
+        # default case, read from stdin
+        else:
+            if sys.version_info < (3,):
+                buffer = sys.stdin.read()
+            else:
+                buffer = sys.stdin.buffer.read()
+        _ANSIBLE_ARGS = buffer
+
+    try:
+        params = json.loads(buffer.decode('utf-8'))
+    except ValueError:
+        # This helper used too early for fail_json to work.
+        print('\n{"msg": "Error: Module unable to decode valid JSON on stdin.  Unable to figure out what parameters were passed", "failed": true}')
+        sys.exit(1)
+
+    if sys.version_info < (3,):
+        params = json_dict_unicode_to_bytes(params)
+
+    try:
+        return params['ANSIBLE_MODULE_ARGS']
+    except KeyError:
+        # This helper does not have access to fail_json so we have to print
+        # json output on our own.
+        print('\n{"msg": "Error: Module unable to locate ANSIBLE_MODULE_ARGS in json data from stdin.  Unable to figure out what parameters were passed", "failed": true}')
+        sys.exit(1)
 
 def env_fallback(*args, **kwargs):
     ''' Load value from environment '''
@@ -531,6 +569,10 @@ def env_fallback(*args, **kwargs):
             return os.environ[arg]
     else:
         raise AnsibleFallbackNotFound
+
+
+class AnsibleFallbackNotFound(Exception):
+    pass
 
 
 class AnsibleModule(object):
@@ -558,7 +600,7 @@ class AnsibleModule(object):
         self.run_command_environ_update = {}
 
         self.aliases = {}
-        self._legal_inputs = ['_ansible_check_mode', '_ansible_no_log', '_ansible_debug', '_ansible_diff', '_ansible_verbosity']
+        self._legal_inputs = ['_ansible_check_mode', '_ansible_no_log', '_ansible_debug', '_ansible_diff', '_ansible_verbosity', '_ansible_selinux_special_fs', '_ansible_version', '_ansible_syslog_facility']
 
         if add_file_common_args:
             for k, v in FILE_COMMON_ARGUMENTS.items():
@@ -574,7 +616,7 @@ class AnsibleModule(object):
         except Exception:
             e = get_exception()
             # Use exceptions here because it isn't safe to call fail_json until no_log is processed
-            print('{"failed": true, "msg": "Module alias error: %s"}' % str(e))
+            print('\n{"failed": true, "msg": "Module alias error: %s"}' % str(e))
             sys.exit(1)
 
         # Save parameter values that should never be logged
@@ -782,7 +824,7 @@ class AnsibleModule(object):
             (device, mount_point, fstype, options, rest) = line.split(' ', 4)
 
             if path_mount_point == mount_point:
-                for fs in self.constants['SELINUX_SPECIAL_FS']:
+                for fs in self._selinux_special_fs:
                     if fs in fstype:
                         special_context = self.selinux_context(path_mount_point)
                         return (True, special_context)
@@ -1175,7 +1217,8 @@ class AnsibleModule(object):
         return aliases_results
 
     def _check_arguments(self, check_invalid_arguments):
-        for (k,v) in self.params.items():
+        self._syslog_facility = 'LOG_USER'
+        for (k,v) in list(self.params.items()):
 
             if k == '_ansible_check_mode' and v:
                 if not self.supports_check_mode:
@@ -1193,6 +1236,15 @@ class AnsibleModule(object):
 
             elif k == '_ansible_verbosity':
                 self._verbosity = v
+
+            elif k == '_ansible_selinux_special_fs':
+                self._selinux_special_fs = v
+
+            elif k == '_ansible_syslog_facility':
+                self._syslog_facility = v
+
+            elif k == '_ansible_version':
+                self.ansible_version = v
 
             elif check_invalid_arguments and k not in self._legal_inputs:
                 self.fail_json(msg="unsupported parameter for module: %s" % k)
@@ -1400,7 +1452,7 @@ class AnsibleModule(object):
         # Return a jsonified string.  Sometimes the controller turns a json
         # string into a dict/list so transform it back into json here
         if isinstance(value, (unicode, bytes)):
-            return value
+            return value.strip()
         else:
             if isinstance(value (list, tuple, dict)):
                 return json.dumps(value)
@@ -1467,54 +1519,18 @@ class AnsibleModule(object):
                     continue
 
     def _load_params(self):
-        ''' read the input and set the params attribute.  Sets the constants as well.'''
+        ''' read the input and set the params attribute.
+
+        This method is for backwards compatibility.  The guts of the function
+        were moved out in 2.1 so that custom modules could read the parameters.
+        '''
         # debug overrides to read args from file or cmdline
-
-        global _ANSIBLE_ARGS
-        if _ANSIBLE_ARGS is not None:
-            buffer = _ANSIBLE_ARGS
-        else:
-            # Avoid tracebacks when locale is non-utf8
-            # We control the args and we pass them as utf8
-            if len(sys.argv) > 1:
-                if os.path.isfile(sys.argv[1]):
-                    fd = open(sys.argv[1], 'rb')
-                    buffer = fd.read()
-                    fd.close()
-                else:
-                    buffer = sys.argv[1]
-                    if sys.version_info >= (3,):
-                        buffer = buffer.encode('utf-8', errors='surrogateescape')
-            # default case, read from stdin
-            else:
-                if sys.version_info < (3,):
-                    buffer = sys.stdin.read()
-                else:
-                    buffer = sys.stdin.buffer.read()
-            _ANSIBLE_ARGS = buffer
-
-        try:
-            params = json.loads(buffer.decode('utf-8'))
-        except ValueError:
-            # This helper used too early for fail_json to work.
-            print('{"msg": "Error: Module unable to decode valid JSON on stdin.  Unable to figure out what parameters were passed", "failed": true}')
-            sys.exit(1)
-
-        if sys.version_info < (3,):
-            params = json_dict_unicode_to_bytes(params)
-
-        try:
-            self.params = params['ANSIBLE_MODULE_ARGS']
-            self.constants = params['ANSIBLE_MODULE_CONSTANTS']
-        except KeyError:
-            # This helper used too early for fail_json to work.
-            print('{"msg": "Error: Module unable to locate ANSIBLE_MODULE_ARGS and ANSIBLE_MODULE_CONSTANTS in json data from stdin.  Unable to figure out what parameters were passed", "failed": true}')
-            sys.exit(1)
+        self.params = _load_params()
 
     def _log_to_syslog(self, msg):
         if HAS_SYSLOG:
             module = 'ansible-%s' % os.path.basename(__file__)
-            facility = getattr(syslog, self.constants.get('SYSLOG_FACILITY', 'LOG_USER'), syslog.LOG_USER)
+            facility = getattr(syslog, self._syslog_facility, syslog.LOG_USER)
             syslog.openlog(str(module), 0, facility)
             syslog.syslog(syslog.LOG_INFO, msg)
 
@@ -1700,7 +1716,7 @@ class AnsibleModule(object):
             kwargs['invocation'] = {'module_args': self.params}
         kwargs = remove_values(kwargs, self.no_log_values)
         self.do_cleanup_files()
-        print(self.jsonify(kwargs))
+        print('\n%s' % self.jsonify(kwargs))
         sys.exit(0)
 
     def fail_json(self, **kwargs):
@@ -1712,7 +1728,7 @@ class AnsibleModule(object):
             kwargs['invocation'] = {'module_args': self.params}
         kwargs = remove_values(kwargs, self.no_log_values)
         self.do_cleanup_files()
-        print(self.jsonify(kwargs))
+        print('\n%s' % self.jsonify(kwargs))
         sys.exit(1)
 
     def fail_on_missing_params(self, required_params=None):

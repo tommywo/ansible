@@ -156,6 +156,7 @@ class Facts(object):
                  { 'path' : '/usr/sbin/urpmi',      'name' : 'urpmi' },
                  { 'path' : '/usr/bin/pacman',      'name' : 'pacman' },
                  { 'path' : '/bin/opkg',            'name' : 'opkg' },
+                 { 'path' : '/usr/pkg/bin/pkgin',   'name' : 'pkgin' },
                  { 'path' : '/opt/local/bin/pkgin', 'name' : 'pkgin' },
                  { 'path' : '/opt/local/bin/port',  'name' : 'macports' },
                  { 'path' : '/usr/local/bin/brew',  'name' : 'homebrew' },
@@ -169,17 +170,20 @@ class Facts(object):
                  { 'path' : '/usr/local/sbin/pkg',  'name' : 'pkgng' },
                 ]
 
-    def __init__(self, module, load_on_init=True):
+    def __init__(self, module, load_on_init=True, cached_facts=None):
 
         self.module = module
-        self.facts = {}
+        if not cached_facts:
+            self.facts = {}
+        else:
+            self.facts = cached_facts    
         ### TODO: Eventually, these should all get moved to populate().  But
         # some of the values are currently being used by other subclasses (for
         # instance, os_family and distribution).  Have to sort out what to do
         # about those first.
         if load_on_init:
             self.get_platform_facts()
-            self.facts.update(Distribution().populate())
+            self.facts.update(Distribution(module).populate())
             self.get_cmdline()
             self.get_public_ssh_host_keys()
             self.get_selinux_facts()
@@ -647,36 +651,32 @@ class Distribution(object):
         FreeBSD = 'FreeBSD', HPUX = 'HP-UX', openSUSE_Leap = 'Suse'
     )
 
-    def __init__(self):
+    def __init__(self, module):
         self.system = platform.system()
         self.facts = {}
+        self.module = module
 
     def populate(self):
-        if self.system == 'Linux':
-            self.get_distribution_facts()
+        self.get_distribution_facts()
         return self.facts
 
     def get_distribution_facts(self):
-
         # The platform module provides information about the running
         # system/distribution. Use this as a baseline and fix buggy systems
         # afterwards
+        self.facts['distribution'] = self.system
         self.facts['distribution_release'] = platform.release()
         self.facts['distribution_version'] = platform.version()
 
-        systems_platform_working = ('NetBSD', 'FreeBSD')
         systems_implemented = ('AIX', 'HP-UX', 'Darwin', 'OpenBSD')
 
-        if self.system in systems_platform_working:
-            # the distribution is provided by platform module already and needs no fixes
-            pass
+        self.facts['distribution'] = self.system
 
-        elif self.system in systems_implemented:
-            self.facts['distribution'] = self.system
+        if self.system in systems_implemented:
             cleanedname = self.system.replace('-','')
             distfunc = getattr(self, 'get_distribution_'+cleanedname)
             distfunc()
-        else:
+        elif self.system == 'Linux':
             # try to find out which linux distribution this is
             dist = platform.dist()
             self.facts['distribution'] = dist[0].capitalize() or 'NA'
@@ -3183,7 +3183,9 @@ def ansible_facts(module, gather_subset):
     facts['gather_subset'] = list(gather_subset)
     facts.update(Facts(module).populate())
     for subset in gather_subset:
-        facts.update(FACT_SUBSETS[subset](module).populate())
+        facts.update(FACT_SUBSETS[subset](module,
+                                         load_on_init=False,
+                                         cached_facts=facts).populate())
     return facts
 
 def get_all_facts(module):

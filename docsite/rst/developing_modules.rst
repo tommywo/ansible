@@ -204,6 +204,25 @@ This should return something like::
 
     {"changed": true, "time": "2012-03-14 12:23:00.000307"}
 
+.. _binary_module_reading_input:
+
+Binary Modules Input
+~~~~~~~~~~~~~~~~~~~~
+
+Support for binary modules was added in Ansible 2.2.  When Ansible detects a binary module, it will proceed to
+supply the argument input as a file on ``argv[1]`` that is formatted as JSON.  The JSON contents of that file
+would resemble something similar to the following payload for a module accepting the same arguments as the
+``ping`` module::
+
+    {
+        "data": "pong",
+        "_ansible_verbosity": 4,
+        "_ansible_diff": false,
+        "_ansible_debug": false,
+        "_ansible_check_mode": false,
+        "_ansible_no_log": false
+    }
+
 .. _module_provided_facts:
 
 Module Provided 'Facts'
@@ -615,12 +634,13 @@ The following  checklist items are important guidelines for people who want to c
 
 * The shebang should always be ``#!/usr/bin/python``, this allows ansible_python_interpreter to work
 * Modules must be written to support Python 2.4. If this is not possible, required minimum python version and rationale should be explained in the requirements section in DOCUMENTATION.
+* Modules must be written to use proper Python-3 syntax.  At some point in the future we'll come up with rules for running on Python-3 but we're not there yet.  See :doc:`developing_modules_python3` for help on how to do this.
 * Documentation: Make sure it exists
     * Module documentation should briefly and accurately define what each module and option does, and how it works with others in the underlying system. Documentation should be written for broad audience--readable both by experts and non-experts. This documentation is not meant to teach a total novice, but it also should not be reserved for the Illuminati (hard balance).
     * If an argument takes both C(True)/C(False) and C(Yes)/C(No), the documentation should use C(True) and C(False). 
     * Descriptions should always start with a Capital letter and end with a full stop. Consistency always helps.
-    * The `required` setting should always be present, be it true *or* false
-    * If `required` is false, you should document `default`, even if the default is 'null' (which is the default if no parameter is supplied). Make sure default parameter in docs matches default parameter in code.
+    * The `required` setting is only required when true, otherwise it is assumed to be false.
+    * If `required` is false/missing, `default` may be specified (assumed 'null' if missing). Ensure that the default parameter in docs matches default parameter in code.
     * Documenting `default` is not needed for `required: true`.
     * Remove unnecessary doc like `aliases: []` or `choices: []`.
     * The version is not a float number and value the current development version.

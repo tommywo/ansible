@@ -163,7 +163,7 @@ class StrategyModule(StrategyBase):
 
             try:
                 display.debug("getting the remaining hosts for this loop")
-                hosts_left = [host for host in self._inventory.get_hosts(iterator._play.hosts) if host.name not in self._tqm._unreachable_hosts and not iterator.is_failed(host)]
+                hosts_left = [host for host in self._inventory.get_hosts(iterator._play.hosts) if host.name not in self._tqm._unreachable_hosts]
                 display.debug("done getting the remaining hosts for this loop")
 
                 # queue up this task for each host in the inventory
@@ -350,7 +350,7 @@ class StrategyModule(StrategyBase):
                 display.debug("checking for any_errors_fatal")
                 failed_hosts = []
                 for res in results:
-                    if res.is_failed() or res.is_unreachable():
+                    if res.is_failed():
                         failed_hosts.append(res._host.name)
 
                 # if any_errors_fatal and we had an error, mark all hosts as failed
@@ -362,6 +362,19 @@ class StrategyModule(StrategyBase):
                             self._tqm._failed_hosts[host.name] = True
                             iterator.mark_host_failed(host)
                 display.debug("done checking for any_errors_fatal")
+
+                display.debug("checking for max_fail_percentage")
+                if iterator._play.max_fail_percentage is not None and len(results) > 0:
+                    percentage = iterator._play.max_fail_percentage / 100.0
+
+                    if (len(self._tqm._failed_hosts) / len(results)) > percentage:
+                        for host in hosts_left:
+                            # don't double-mark hosts, or the iterator will potentially
+                            # fail them out of the rescue/always states
+                            if host.name not in failed_hosts:
+                                self._tqm._failed_hosts[host.name] = True
+                                iterator.mark_host_failed(host)
+                display.debug("done checking for max_fail_percentage")
 
             except (IOError, EOFError) as e:
                 display.debug("got IOError/EOFError in task loop: %s" % e)

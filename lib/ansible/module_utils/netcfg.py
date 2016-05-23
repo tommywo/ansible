@@ -229,7 +229,7 @@ class NetworkConfig(object):
         if self._device_os == 'junos':
             return updates
 
-        diffs = dict()
+        diffs = collections.OrderedDict()
         for update in updates:
             if replace == 'block' and update.parents:
                 update = update.parents[-1]
@@ -259,6 +259,8 @@ class NetworkConfig(object):
             config.append(line)
             if parent:
                 parent.children.append(line)
+                if parent.parents:
+                    line.parents.append(*parent.parents)
                 line.parents.append(parent)
             parent = line
             offset += self.indent
@@ -382,7 +384,7 @@ class Conditional(object):
         return self.number(value) <= self.value
 
     def contains(self, value):
-        return self.value in value
+        return str(self.value) in value
 
 
 

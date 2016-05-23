@@ -128,6 +128,7 @@ class PlaybookExecutor:
                     else:
                         self._tqm._unreachable_hosts.update(self._unreachable_hosts)
 
+                        break_play = False
                         # we are actually running plays
                         for batch in self._get_serialized_batches(new_play):
                             if len(batch) == 0:
@@ -147,17 +148,21 @@ class PlaybookExecutor:
                             failed_hosts_count = len(self._tqm._failed_hosts) + len(self._tqm._unreachable_hosts)
                             if new_play.max_fail_percentage is not None and \
                                int((new_play.max_fail_percentage)/100.0 * len(batch)) > int((len(batch) - failed_hosts_count) / len(batch) * 100.0):
+                                break_play = True
                                 break
                             elif len(batch) == failed_hosts_count:
+                                break_play = True
                                 break
 
-                            # clear the failed hosts dictionaires in the TQM for the next batch
+                            # save the unreachable hosts from this batch
                             self._unreachable_hosts.update(self._tqm._unreachable_hosts)
-                            self._tqm.clear_failed_hosts()
 
-                        # if the last result wasn't zero or 3 (some hosts were unreachable),
-                        # break out of the serial batch loop
-                        if result not in (0, 3):
+                            # if the last result wasn't zero or 3 (some hosts were unreachable),
+                            # break out of the serial batch loop
+                            if result not in (0, 3):
+                                break
+
+                        if break_play:
                             break
 
                     i = i + 1 # per play
